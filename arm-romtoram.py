@@ -46,8 +46,6 @@
 #   - Find the ROM2RAM func automatically
 #   - Find the ROM2RAM tables automatically
 #   - Validate unpackers table
-#   - Merge sequental memory blocks if any created
-#   - Mark src data as arrays
 #
 #@author Anton Fedorov <datacompboy@gmail.com>
 #@category ARM
@@ -100,6 +98,27 @@ def tryMakeArray(src, size):
       listing.createData(src, ghidra.program.model.data.ArrayDataType(ghidra.program.model.data.ByteDataType(), size, 1))
     except Exception as E:
       print("(W) Can't create array", E)
+
+
+def tidyMemory():
+  """Collapse sequential similar split blocks."""
+  blocks = memory.getBlocks()
+  blockId = 1
+  while blockId < len(blocks):
+    if ((blocks[blockId].getType() == ghidra.program.model.mem.MemoryBlockType.DEFAULT) and
+        (blocks[blockId-1].getType() == ghidra.program.model.mem.MemoryBlockType.DEFAULT) and
+        (blocks[blockId].isInitialized() == blocks[blockId-1].isInitialized()) and
+        (blocks[blockId].getName()[-6:] == ".split") and
+        (blocks[blockId-1].getEnd().add(1) == blocks[blockId].getStart())):
+      memory.join(blocks[blockId-1], blocks[blockId])
+      blocks = memory.getBlocks()
+    else:
+      name = blocks[blockId].getName()
+      while name[-12:] == ".split.split":
+        name = name[:-6]
+      blocks[blockId].setName(name)
+      blockId += 1
+
 
 # Step 0: unpackers
 def _memcpy(src):
@@ -168,5 +187,8 @@ while (entry < ROMtoRAMtableEnd.address):
   tryMakeArray(src, processedLen)
   entry = entry.add(8)
 
-# Step 4: PROFIT
+# Step 4: ...
+tidyMemory()
+
+# Step 5: PROFIT
 print("Unpack complete, good luck")
