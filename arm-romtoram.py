@@ -51,7 +51,6 @@
 #@category ARM
 # 
 
-from ghidra.program.model.symbol.SourceType import *
 import array
 import string
 
