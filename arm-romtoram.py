@@ -1,8 +1,5 @@
 # Run ROM to RAM copy and unpack.
 #
-#@author Anton Fedorov <datacompboy@gmail.com>
-#@category ARM
-# 
 # So far you should do before the script:
 #   1. Define RAM region that will cover target addresses (e.g. 0x20000000...0x20100000 or whatever)
 #   2. Find CopyROMtoRAM function, that looks like this:
@@ -52,26 +49,71 @@
 #   - Merge sequental memory blocks if any created
 #   - Mark src data as arrays
 #
+#@author Anton Fedorov <datacompboy@gmail.com>
+#@category ARM
+# 
 
 from ghidra.program.model.symbol.SourceType import *
 import array
 import string
+
+# Helpers
 listing = currentProgram.getListing()
 memory = currentProgram.getMemory()
 
+
+def getUByte(address):
+  return getByte(address)  & 0xFF
+
+
+def forceWriteMem(dst, data):
+  """Write `data` array starting address `dst`, making it initialized if necessary."""
+  dstEnd = dst.add(len(data)-1)
+  dstBlock = memory.getBlock(dst)
+  if (not dstBlock.contains(dstEnd)):
+    raise Exception("Whoops, memory got fragmented")
+
+  if (not dstBlock.isInitialized()):
+    # Split uninitialized RAM...
+    if (dstBlock.contains(dstEnd.add(1))):
+      memory.split(dstBlock, dstEnd.add(1))
+    if (dstBlock.contains(dst.subtract(1))):
+      memory.split(dstBlock, dst)
+    memory.convertToInitialized(memory.getBlock(dst), 0)
+
+  memory.setBytes(dst, data)
+
+
+def getDefAddress(src):
+  """Get address stored at address `src`, make it pointer if it uninitialized."""
+  srcEntry = listing.getCodeUnitAt(src)
+  if (not srcEntry.isDefined()):
+    listing.createData(src, ghidra.program.model.data.PointerDataType())
+    srcEntry = listing.getCodeUnitAt(src)
+  return srcEntry.getValue()
+
+
+def tryMakeArray(src, size):
+  srcEntry = listing.getCodeUnitAt(src)
+  if (not srcEntry.isDefined()):
+    try:
+      listing.createData(src, ghidra.program.model.data.ArrayDataType(ghidra.program.model.data.ByteDataType(), size, 1))
+    except Exception as E:
+      print("(W) Can't create array", E)
+
 # Step 0: unpackers
-def getUByte(address):  return getByte(address)  & 0xFF
 def _memcpy(src):
   size = getInt(src.add(3))
   dataAddr = src.add(7)
-  return getBytes(dataAddr, size)
+  return (getBytes(dataAddr, size), 7 + size)
 
 def _memzero(src):
   size = getInt(src.add(3))
-  return array.array('b', [0]*size)
+  return (array.array('b', [0]*size), 7)
 
 def _unpack(src):
   res = []
+  _start = src
   while True:
     control = getUByte(src)
     src = src.add(1)
@@ -81,10 +123,10 @@ def _unpack(src):
         src = src.add(1)
       else:
         offset = (getUByte(src) << 4) | (getUByte(src.add(1)) >> 4)
-        if offset == 0xFFF:
-          return array.array('b', res)
         size = (getUByte(src.add(1)) & 0x0F) + 3
         src = src.add(2)
+        if offset == 0xFFF:
+          return (array.array('b', res), src.getOffset()-_start.getOffset())
         if (size == 18):
           extra = getUByte(src)
           src = src.add(1)
@@ -119,35 +161,11 @@ decoders = [
 # 3.1: make table addresses
 entry = ROMtoRAMtable.address
 while (entry < ROMtoRAMtableEnd.address):
-  srcEntry = listing.getCodeUnitAt(entry)
-  if (not srcEntry.isDefined()):
-    listing.createData(entry, ghidra.program.model.data.PointerDataType())
-    srcEntry = listing.getCodeUnitAt(entry)
-  src = srcEntry.getValue()
-  #
-  dstEntry = listing.getCodeUnitAt(entry.add(4))
-  if (not dstEntry.isDefined()):
-    listing.createData(entry.add(4), ghidra.program.model.data.PointerDataType())
-    dstEntry = listing.getCodeUnitAt(entry.add(4))
-  dst = dstEntry.getValue()
-  #
-  unpackedData = decoders[getUByte(src)](src.add(1))
-
-  # print("Unpacked into: ", unpackedData)
-  # Store unpackedData array into memory, by making it initialized... 
-  dstEnd = dst.add(len(unpackedData)-1)
-  dstBlock = memory.getBlock(dst)
-  if (not dstBlock.contains(dstEnd)):
-    raise Exception("Whoops, memory got fragmented")
-  if (not dstBlock.isInitialized()):
-    # Split uninitialized RAM...
-    if (dstBlock.contains(dstEnd.add(1))):
-      memory.split(dstBlock, dstEnd.add(1))
-    if (dstBlock.contains(dst.subtract(1))):
-      memory.split(dstBlock, dst)
-    memory.convertToInitialized(memory.getBlock(dst), 0)
-  memory.setBytes(dst, unpackedData)
-  #
+  src = getDefAddress(entry)
+  dst = getDefAddress(entry.add(4))
+  unpackedData, processedLen = decoders[getUByte(src)](src.add(1))
+  forceWriteMem(dst, unpackedData)
+  tryMakeArray(src, processedLen)
   entry = entry.add(8)
 
 # Step 4: PROFIT
