@@ -84,9 +84,13 @@ def forceWriteMem(dst, data):
 def getDefAddress(src):
   """Get address stored at address `src`, make it pointer if it uninitialized."""
   srcEntry = listing.getCodeUnitAt(src)
+  if srcEntry.isDefined() and type(srcEntry.getDataType()) == ghidra.program.model.data.Undefined4DataType:
+    listing.clearCodeUnits(src, src.add(3), False)
+    srcEntry = listing.getCodeUnitAt(src)
   if (not srcEntry.isDefined()):
     listing.createData(src, ghidra.program.model.data.PointerDataType())
     srcEntry = listing.getCodeUnitAt(src)
+    
   return srcEntry.getValue()
 
 
