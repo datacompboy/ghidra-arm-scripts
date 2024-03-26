@@ -153,10 +153,11 @@ def _unpack(src):
           extra = getUByte(src)
           src = src.add(1)
           if (extra & 0x80 != 0):
-            extra = extra & 0x7F + getUByte(src)
+            extra = (extra & 0x7F) + (getUByte(src) << 7)
             src = src.add(1)
           size = size + extra
         offset = - 1 - offset
+        if (abs(offset) > len(res)): raise Exception("Offset "+str(offset)+" is outside of window "+str(len(res)))
         for k in range(size):
           res.append(res[offset])
       control = control >> 1
